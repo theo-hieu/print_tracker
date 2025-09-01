@@ -2,9 +2,9 @@
 
 This project was made to easily track completed 3D printing jobs
 
-![](pictures/Jobs.png)
-![](pictures/Analytics.png)
-![](pictures/Analytics2.png)
+![](pictures/Jobs.PNG)
+![](pictures/Analytics.PNG)
+![](pictures/Analytics2.PNG)
 
 ## Available Scripts
 Make sure to run npm install in respective folder

@@ -2,12 +2,22 @@
 
 This project was made to easily track completed 3D printing jobs
 
+![](pictures/Jobs.png)
+![](pictures/Analytics.png)
+![](pictures/Analytics2.png)
+
 ## Available Scripts
 Make sure to run npm install in respective folder
 In the project directory, you can run:
 
 ### `docker compose up --build -d`
-Run this in the top-level directory
+Run this in the top-level directory to start the web-app
+--build flag to build the project
+-d flag for detatched mode in console
+
+### `docker compose down -v`
+Brings down the web-app containers
+-v flag to wipe the volume. In other words, reset database
 
 ### `npm run dev`
 Navigate to the frontend folder

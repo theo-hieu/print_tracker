@@ -1,0 +1,45 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: mysql-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: printing_db
+      MYSQL_USER: printuser
+      MYSQL_PASSWORD: printpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/sql/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
+      - ./backend/sql/seed.sql:/docker-entrypoint-initdb.d/2-seed.sql
+
+  backend:
+    build: ./backend
+    container_name: backend-api
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: db
+      DB_USER: printuser
+      DB_PASSWORD: printpass
+      DB_NAME: printing_db
+      PORT: 5000
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: frontend-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_BASE=http://localhost:5000/api
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

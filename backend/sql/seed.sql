@@ -1,7 +1,7 @@
 USE printing_db;
 
-INSERT INTO Users (UserName) VALUES
-('TestUser');
+INSERT INTO Users (UserName, Email, PasswordHash) VALUES
+('TestUser', 'test@example.com', '$2b$10$YourHashHere');
 
 INSERT INTO Printers (PrinterName) VALUES
 ('Prusa'),('FormLabs'),('Stratasys');

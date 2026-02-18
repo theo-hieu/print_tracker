@@ -1,0 +1,40 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+require("express-async-errors");
+const cors_1 = __importDefault(require("cors"));
+const path_1 = __importDefault(require("path"));
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
+const auth_1 = __importDefault(require("./routes/auth"));
+const users_1 = __importDefault(require("./routes/users"));
+const materials_1 = __importDefault(require("./routes/materials"));
+const models_1 = __importDefault(require("./routes/models"));
+const jobs_1 = __importDefault(require("./routes/jobs"));
+const printers_1 = __importDefault(require("./routes/printers"));
+const analytics_1 = __importDefault(require("./routes/analytics"));
+const errorHandler_1 = __importDefault(require("./middleware/errorHandler"));
+const app = (0, express_1.default)();
+app.use((0, cors_1.default)());
+app.use(express_1.default.json());
+app.use("/stl_files", express_1.default.static(path_1.default.join(__dirname, "stl_files")));
+app.use("/job_photos", express_1.default.static(path_1.default.join(__dirname, "job_photos")));
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+app.use("/api/auth", auth_1.default);
+app.use("/api/users", users_1.default);
+app.use("/api/materials", materials_1.default);
+app.use("/api/models", models_1.default);
+app.use("/api/jobs", jobs_1.default);
+app.use("/api/printers", printers_1.default);
+app.use("/api/analytics", analytics_1.default);
+app.use(errorHandler_1.default);
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Backend running on port ${PORT}`);
+});

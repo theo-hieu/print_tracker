@@ -1,0 +1,1 @@
+src/components/Analytics.tsx(50,7): error TS6133: 'COLORS' is declared but its value is never read.

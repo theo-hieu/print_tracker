@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  UserID       Int    @id @default(autoincrement())
+  UserName     String
+  Email        String @unique
+  PasswordHash String
+  Jobs         Job[]
+}
+
+model Material {
+  MaterialID           Int             @id @default(autoincrement())
+  MaterialName         String
+  Color                String?
+  Type                 String?         @db.VarChar(50)
+  MaterialTypeID       Int?
+  InitialQuantityGrams Decimal?        @db.Decimal(10, 2)
+  CurrentQuantityGrams Decimal?        @db.Decimal(10, 2)
+  ReorderThresholdGrams Decimal?       @db.Decimal(10, 2)
+  ExpirationDate       DateTime?       @db.Date
+  LotNumber            String?         @db.VarChar(100)
+  Location             String?         @db.VarChar(100)
+  MaterialType         MaterialType?   @relation(fields: [MaterialTypeID], references: [MaterialTypeID])
+  PrinterCarboys       PrinterCarboy[]
+}
+
+model MaterialType {
+  MaterialTypeID   Int             @id @default(autoincrement())
+  TypeName         String          @unique
+  Description      String?
+  CostPerGram      Decimal?        @db.Decimal(10, 4)
+  Materials        Material[]
+  ModelMaterials   ModelMaterial[]
+  JobMaterials     JobMaterial[]
+}
+
+model Printer {
+  PrinterID            Int       @id @default(autoincrement())
+  PrinterName          String
+  PrinterType          String?   @db.VarChar(50)  // FDM, SLA, PolyJet, etc.
+  Location             String?   @db.VarChar(100)
+  Status               String?   @db.VarChar(50)
+  LastMaintenance       DateTime? @db.Date
+  NextMaintenance       DateTime? @db.Date
+  MaintenanceIntervalHours Int?
+  TotalPrintHours       Decimal?  @db.Decimal(10, 2)
+  HourlyRate            Decimal?  @db.Decimal(10, 2)
+  MaxCarboys           Int?      // e.g. 8 areas for J850
+  Description          String?   @db.Text
+  Jobs                 Job[]
+  PrinterCarboys       PrinterCarboy[]
+}
+
+model PrinterCarboy {
+  PrinterID   Int
+  AreaNumber  Int       // 1-8 (4 rows × 2 columns)
+  SlotNumber  Int       // 1-2 per area
+  MaterialID  Int?
+  Printer     Printer   @relation(fields: [PrinterID], references: [PrinterID], onDelete: Cascade)
+  Material    Material? @relation(fields: [MaterialID], references: [MaterialID], onDelete: SetNull)
+
+  @@id([PrinterID, AreaNumber, SlotNumber])
+}
+
+model Model {
+  ModelID                Int             @id @default(autoincrement())
+  ModelName              String
+  EstimatedCost          Decimal?        @db.Decimal(10, 2)
+  STLFilePath            String?         @db.VarChar(1024)
+  EstimatedPrintTime     String?         @db.VarChar(50)
+  EstimatedFilamentUsage Decimal?        @db.Decimal(10, 2)
+  LaborCost              Decimal?        @db.Decimal(10, 2)
+  AdditionalCost         Decimal?        @db.Decimal(10, 2)
+  MarkupPercent          Decimal?        @db.Decimal(5, 2)
+  ClientID               Int?
+  Jobs                   Job[]
+  ModelMaterials         ModelMaterial[]
+  Client                 Client?         @relation(fields: [ClientID], references: [ClientID])
+}
+
+model ModelMaterial {
+  ModelID            Int
+  MaterialTypeID     Int
+  FilamentUsageGrams Decimal      @db.Decimal(10, 2)
+  Model              Model        @relation(fields: [ModelID], references: [ModelID], onDelete: Cascade)
+  MaterialType       MaterialType @relation(fields: [MaterialTypeID], references: [MaterialTypeID], onDelete: Cascade)
+
+  @@id([ModelID, MaterialTypeID])
+}
+
+model Job {
+  JobID             Int           @id @default(autoincrement())
+  JobName           String
+  UserID            Int
+  ModelID           Int
+  PrinterID         Int?
+  PrintDate         DateTime      @db.Date
+  ScheduledDate     DateTime?     @db.Timestamptz()
+  Status            String?       @db.VarChar(50)
+  Notes             String?       @db.Text
+  EstimatedCost     Decimal?      @db.Decimal(10, 2)
+  ActualCost        Decimal?      @db.Decimal(10, 2)
+  ActualPrintTimeMin Int?
+  
+  // Billing Fields
+  LaborCost         Decimal?      @db.Decimal(10, 2)
+  AdditionalCost    Decimal?      @db.Decimal(10, 2)
+  MarkupPercent     Decimal?      @db.Decimal(5, 2)
+  ClientID          Int?
+
+  User              User          @relation(fields: [UserID], references: [UserID])
+  Model             Model         @relation(fields: [ModelID], references: [ModelID])
+  Printer           Printer?      @relation(fields: [PrinterID], references: [PrinterID])
+  Client            Client?       @relation(fields: [ClientID], references: [ClientID])
+  JobMaterials      JobMaterial[]
+  JobPhotos         JobPhoto[]
+}
+
+model Client {
+  ClientID    Int     @id @default(autoincrement())
+  Name        String
+  Title       String?
+  Department  String?
+  Chartstring String?
+  PI          String?
+  Jobs        Job[]
+  Models      Model[]
+}
+
+model JobMaterial {
+  JobID              Int
+  MaterialTypeID     Int
+  MaterialUsageGrams Decimal      @db.Decimal(10, 2)
+  MaterialStartGrams Decimal?     @db.Decimal(10, 2)
+  MaterialEndGrams   Decimal?     @db.Decimal(10, 2)
+  ActualUsageGrams   Decimal?     @db.Decimal(10, 2)
+  Job                Job          @relation(fields: [JobID], references: [JobID], onDelete: Cascade)
+  MaterialType       MaterialType @relation(fields: [MaterialTypeID], references: [MaterialTypeID], onDelete: Cascade)
+
+  @@id([JobID, MaterialTypeID])
+}
+
+model JobPhoto {
+  PhotoID   Int      @id @default(autoincrement())
+  JobID     Int
+  FilePath  String   @db.VarChar(1024)
+  Caption   String?  @db.VarChar(255)
+  PhotoType String?  @db.VarChar(20) // before, after, failure
+  CreatedAt DateTime @default(now())
+  Job       Job      @relation(fields: [JobID], references: [JobID], onDelete: Cascade)
+}

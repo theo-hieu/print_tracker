@@ -12,7 +12,9 @@ export const createJobSchema = z.object({
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
     ),
-  Status: z.enum(["queued", "printing", "completed", "failed"]).optional(),
+  Status: z
+    .enum(["queued", "printing", "completed", "failed", "cancelled"])
+    .optional(),
   PrinterID: z.number().int().positive().optional().nullable(),
   Notes: z.string().optional().nullable(),
   ScheduledDate: z.string().optional().nullable(),

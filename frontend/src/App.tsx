@@ -12,6 +12,7 @@ import Clients from "./components/Clients";
 import Planning from "./components/Planning";
 import Login from "./components/Login";
 import SignUp from "./components/SignUp";
+import Profile from "./components/Profile";
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/planning" element={<Planning />} />
+          <Route path="/profile" element={<Profile />} />
           {/* Added this route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

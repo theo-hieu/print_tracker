@@ -12,6 +12,8 @@ model User {
   UserName     String
   Email        String @unique
   PasswordHash String
+  ProfileIcon  String? @db.VarChar(1024)
+  DateJoined   DateTime @default(now())
   Jobs         Job[]
 }
 
@@ -29,6 +31,7 @@ model Material {
   Location             String?         @db.VarChar(100)
   MaterialType         MaterialType?   @relation(fields: [MaterialTypeID], references: [MaterialTypeID])
   PrinterCarboys       PrinterCarboy[]
+  JobCarboys           JobCarboy[]
 }
 
 model MaterialType {
@@ -56,6 +59,7 @@ model Printer {
   Description          String?   @db.Text
   Jobs                 Job[]
   PrinterCarboys       PrinterCarboy[]
+  JobCarboys           JobCarboy[]
 }
 
 model PrinterCarboy {
@@ -121,6 +125,7 @@ model Job {
   Client            Client?       @relation(fields: [ClientID], references: [ClientID])
   JobMaterials      JobMaterial[]
   JobPhotos         JobPhoto[]
+  JobCarboys        JobCarboy[]
 }
 
 model Client {
@@ -155,4 +160,24 @@ model JobPhoto {
   PhotoType String?  @db.VarChar(20) // before, after, failure
   CreatedAt DateTime @default(now())
   Job       Job      @relation(fields: [JobID], references: [JobID], onDelete: Cascade)
+}
+
+model JobCarboy {
+  JobCarboyID          Int       @id @default(autoincrement())
+  JobID                Int
+  PrinterID            Int
+  AreaNumber           Int
+  SlotNumber           Int
+  MaterialID           Int?
+  MaterialName         String?   @db.VarChar(255)
+  StartGrams           Decimal?  @db.Decimal(10, 2)
+  EndGrams             Decimal?  @db.Decimal(10, 2)
+  MiscGrams            Decimal?  @db.Decimal(10, 2)
+  AdditionalDeductions Json?
+
+  Job                  Job       @relation(fields: [JobID], references: [JobID], onDelete: Cascade)
+  Material             Material? @relation(fields: [MaterialID], references: [MaterialID], onDelete: SetNull)
+  Printer              Printer   @relation(fields: [PrinterID], references: [PrinterID], onDelete: Cascade)
+
+  @@unique([JobID, AreaNumber, SlotNumber])
 }

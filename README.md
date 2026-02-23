@@ -29,3 +29,7 @@ You may also see any lint errors in the console.
 
 ### `node server.js`
 Starts the backend server at [http://localhost:5000](http://localhost:5000)
+
+### `npm run ts-node backup.ts`
+Creates a backup of the database
+To restore `psql "your_destination_database_url" < backup.sql`

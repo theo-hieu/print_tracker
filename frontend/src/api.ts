@@ -15,4 +15,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Add interceptor to handle 401 responses (invalid/expired token)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      // Redirect to login page by reloading, App.tsx will show Login component
+      window.location.href = "/";
+    }
+    return Promise.reject(error);
+  },
+);
+
 export default api;

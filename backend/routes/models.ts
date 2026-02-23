@@ -9,7 +9,7 @@ import { createModelSchema } from "../validators/schemas";
 
 const router = express.Router();
 
-const uploadDir = path.join(__dirname, "..", "stl_files");
+const uploadDir = path.join(process.cwd(), "stl_files");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -111,6 +111,7 @@ router.put("/:id", auth, async (req: Request, res: Response) => {
     EstimatedPrintTime,
     EstimatedFilamentUsage,
     ClientID,
+    Materials,
   } = req.body;
 
   try {
@@ -122,10 +123,20 @@ router.put("/:id", auth, async (req: Request, res: Response) => {
         EstimatedPrintTime: EstimatedPrintTime || undefined,
         EstimatedFilamentUsage: EstimatedFilamentUsage || undefined,
         ClientID: ClientID ? parseInt(ClientID) : null,
+        ...(Materials && {
+          ModelMaterials: {
+            deleteMany: {},
+            create: Materials.map((m: any) => ({
+              MaterialTypeID: parseInt(m.MaterialTypeID),
+              FilamentUsageGrams: parseFloat(m.FilamentUsageGrams),
+            })),
+          },
+        }),
       },
     });
     res.json({ message: "Model updated", model: updatedModel });
   } catch (error) {
+    console.error("Failed to update model:", error);
     res.status(500).json({ error: "Failed to update model" });
   }
 });

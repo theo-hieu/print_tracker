@@ -17,6 +17,17 @@ interface Client {
   Name: string;
 }
 
+interface MaterialType {
+  MaterialTypeID: number;
+  TypeName: string;
+}
+
+interface ModelMaterial {
+  MaterialTypeID: number;
+  FilamentUsageGrams: number;
+  MaterialType: MaterialType;
+}
+
 interface Model {
   ModelID: number;
   ModelName: string;
@@ -26,11 +37,13 @@ interface Model {
   STLFilePath?: string;
   ClientID?: number | null;
   Client?: Client | null;
+  ModelMaterials?: ModelMaterial[];
 }
 
 export default function Models() {
   const [models, setModels] = useState<Model[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<Model | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -42,16 +55,19 @@ export default function Models() {
     EstimatedPrintTime: "",
     EstimatedFilamentUsage: "",
     ClientID: "",
+    Materials: [] as { MaterialTypeID: string; FilamentUsageGrams: string }[],
   });
 
   async function load() {
     try {
-      const [modelRes, clientRes] = await Promise.all([
+      const [modelRes, clientRes, matTypeRes] = await Promise.all([
         api.get("/models"),
         api.get("/clients"),
+        api.get("/material-types"),
       ]);
       setModels(modelRes.data);
       setClients(clientRes.data);
+      setMaterialTypes(matTypeRes.data);
     } catch (err) {
       console.error("Failed to load data", err);
     }
@@ -68,6 +84,11 @@ export default function Models() {
       EstimatedPrintTime: model.EstimatedPrintTime || "",
       EstimatedFilamentUsage: model.EstimatedFilamentUsage?.toString() || "",
       ClientID: model.ClientID?.toString() || "",
+      Materials:
+        model.ModelMaterials?.map((m) => ({
+          MaterialTypeID: m.MaterialTypeID.toString(),
+          FilamentUsageGrams: m.FilamentUsageGrams.toString(),
+        })) || [],
     });
     setIsModalOpen(true);
   };
@@ -380,6 +401,83 @@ export default function Models() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="pt-2 border-t mt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Materials Used
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        Materials: [
+                          ...formData.Materials,
+                          { MaterialTypeID: "", FilamentUsageGrams: "" },
+                        ],
+                      })
+                    }
+                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    + Add Material
+                  </button>
+                </div>
+                {formData.Materials.map((mat, index) => (
+                  <div key={index} className="flex gap-2 mb-2 items-center">
+                    <select
+                      className="flex-1 border border-gray-300 rounded p-2 text-sm focus:ring-2 focus:ring-red-500 outline-none"
+                      value={mat.MaterialTypeID}
+                      onChange={(e) => {
+                        const newMats = [...formData.Materials];
+                        newMats[index].MaterialTypeID = e.target.value;
+                        setFormData({ ...formData, Materials: newMats });
+                      }}
+                      required
+                    >
+                      <option value="">Select Material...</option>
+                      {materialTypes.map((mt) => (
+                        <option
+                          key={mt.MaterialTypeID}
+                          value={mt.MaterialTypeID}
+                        >
+                          {mt.TypeName}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Grams"
+                      className="w-24 border border-gray-300 rounded p-2 text-sm focus:ring-2 focus:ring-red-500 outline-none"
+                      value={mat.FilamentUsageGrams}
+                      onChange={(e) => {
+                        const newMats = [...formData.Materials];
+                        newMats[index].FilamentUsageGrams = e.target.value;
+                        setFormData({ ...formData, Materials: newMats });
+                      }}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newMats = formData.Materials.filter(
+                          (_, i) => i !== index,
+                        );
+                        setFormData({ ...formData, Materials: newMats });
+                      }}
+                      className="text-red-500 hover:text-red-700 p-1"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+                {formData.Materials.length === 0 && (
+                  <p className="text-sm text-gray-500 italic">
+                    No materials added.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

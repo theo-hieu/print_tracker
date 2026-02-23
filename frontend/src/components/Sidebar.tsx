@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
+import api from "../api";
 import {
   Home,
   Box,
@@ -34,6 +35,29 @@ interface SidebarProps {
 
 export default function Sidebar({ onLogout }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [userProfile, setUserProfile] = useState<{
+    UserName: string;
+    Email: string;
+    ProfileIcon: string | null;
+  } | null>(null);
+  const navigate = useNavigate();
+
+  const backendUrl = import.meta.env.VITE_API_BASE
+    ? import.meta.env.VITE_API_BASE.replace("/api", "")
+    : "http://localhost:5000";
+
+  useEffect(() => {
+    // Fetch basic user profile to display
+    const fetchProfile = async () => {
+      try {
+        const res = await api.get("/users/profile");
+        setUserProfile(res.data);
+      } catch (err) {
+        console.error("Failed to fetch sidebar profile", err);
+      }
+    };
+    fetchProfile();
+  }, []);
 
   return (
     <aside
@@ -99,24 +123,43 @@ export default function Sidebar({ onLogout }: SidebarProps) {
       </nav>
 
       {/* User Profile Footer */}
-      <div className="p-4 border-t border-red-800">
+      <div
+        className="p-4 border-t border-red-800 cursor-pointer hover:bg-red-800/30 transition-colors"
+        onClick={() => navigate("/profile")}
+        title="View Profile"
+      >
         <div
           className={`flex items-center gap-3 ${isCollapsed ? "justify-center" : ""}`}
         >
-          <div className="w-10 h-10 rounded-full bg-red-800 flex items-center justify-center text-white shrink-0 border-2 border-red-700">
-            <User size={20} />
+          <div className="w-10 h-10 rounded-full bg-red-800 flex items-center justify-center text-white shrink-0 shadow-md border-2 border-red-700 overflow-hidden">
+            {userProfile?.ProfileIcon ? (
+              <img
+                src={`${backendUrl}${userProfile.ProfileIcon}`}
+                alt="Profile Icon"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <User size={20} />
+            )}
           </div>
           {!isCollapsed && (
             <div className="flex-1 overflow-hidden">
-              <p className="text-sm font-semibold truncate">Admin User</p>
-              <p className="text-xs text-red-300 truncate">admin@example.com</p>
+              <p className="text-sm font-semibold truncate">
+                {userProfile?.UserName || "Loading..."}
+              </p>
+              <p className="text-xs text-red-300 truncate">
+                {userProfile?.Email || "..."}
+              </p>
             </div>
           )}
           {!isCollapsed && (
             <button
-              className="text-red-300 hover:text-white transition-colors"
+              className="text-red-300 hover:text-white transition-colors p-1 rounded hover:bg-red-700 ml-auto"
               title="Logout"
-              onClick={onLogout}
+              onClick={(e) => {
+                e.stopPropagation(); // prevent navigating to profile
+                onLogout();
+              }}
             >
               <LogOut size={18} />
             </button>

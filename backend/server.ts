@@ -22,8 +22,12 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use("/stl_files", express.static(path.join(__dirname, "stl_files")));
-app.use("/job_photos", express.static(path.join(__dirname, "job_photos")));
+app.use("/stl_files", express.static(path.join(process.cwd(), "stl_files")));
+app.use("/job_photos", express.static(path.join(process.cwd(), "job_photos")));
+app.use(
+  "/profile_icons",
+  express.static(path.join(process.cwd(), "profile_icons")),
+);
 
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);

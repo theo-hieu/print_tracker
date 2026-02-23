@@ -10,6 +10,10 @@ services:
       - ./backend/.env
     environment:
       - PORT=5000
+    volumes:
+      - ./backend/job_photos:/usr/src/app/dist/job_photos
+      - ./backend/profile_icons:/usr/src/app/dist/profile_icons
+      - ./backend/stl_files:/usr/src/app/dist/stl_files
 
   frontend:
     build:

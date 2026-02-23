@@ -26,6 +26,7 @@ router.get("/", async (req: Request, res: Response) => {
               CurrentQuantityGrams: true,
               InitialQuantityGrams: true,
               ExpirationDate: true,
+              LotNumber: true,
             },
           },
         },

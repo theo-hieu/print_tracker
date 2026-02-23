@@ -10,7 +10,7 @@ import fs from "fs";
 const router = express.Router();
 
 // Photo upload setup
-const photoDir = path.join(__dirname, "..", "job_photos");
+const photoDir = path.join(process.cwd(), "job_photos");
 if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
 
 const photoStorage = multer.diskStorage({
@@ -42,6 +42,11 @@ router.get("/", async (req: Request, res: Response) => {
       JobMaterials: {
         include: {
           MaterialType: { select: { TypeName: true } },
+        },
+      },
+      JobCarboys: {
+        include: {
+          Material: { select: { LotNumber: true } },
         },
       },
       JobPhotos: true,
@@ -233,8 +238,9 @@ router.put(
 // COMPLETE a job - confirm material usage and deduct from carboys
 router.post("/:id/complete", auth, async (req: Request, res: Response) => {
   const jobId = parseInt(req.params.id as string);
-  const { materials } = req.body;
+  const { materials, carboys } = req.body;
   // materials: [{ MaterialTypeID, ActualUsageGrams, StartGrams?, EndGrams? }]
+  // carboys: [{ PrinterID, AreaNumber, SlotNumber, MaterialID, MaterialName, StartGrams, EndGrams, MiscGrams, AdditionalDeductions }]
 
   const job = await prisma.job.findUnique({
     where: { JobID: jobId },
@@ -246,72 +252,66 @@ router.post("/:id/complete", auth, async (req: Request, res: Response) => {
     return;
   }
 
-  if (!Array.isArray(materials)) {
-    res.status(400).json({ error: "materials must be an array" });
+  if (job.Status === "completed") {
+    res.status(400).json({ error: "Job is already completed" });
     return;
   }
 
   try {
-    for (const mat of materials) {
-      const { MaterialTypeID, ActualUsageGrams, StartGrams, EndGrams } = mat;
-
-      // Update the JobMaterial record with actual values
-      await prisma.jobMaterial.update({
-        where: {
-          JobID_MaterialTypeID: {
-            JobID: jobId,
-            MaterialTypeID: parseInt(MaterialTypeID),
+    // 1. Process legacy JobMaterials updates if provided
+    if (Array.isArray(materials)) {
+      for (const mat of materials) {
+        const { MaterialTypeID, ActualUsageGrams, StartGrams, EndGrams } = mat;
+        await prisma.jobMaterial.update({
+          where: {
+            JobID_MaterialTypeID: {
+              JobID: jobId,
+              MaterialTypeID: parseInt(MaterialTypeID),
+            },
           },
-        },
-        data: {
-          ActualUsageGrams: parseFloat(ActualUsageGrams),
-          MaterialStartGrams: StartGrams ? parseFloat(StartGrams) : undefined,
-          MaterialEndGrams: EndGrams ? parseFloat(EndGrams) : undefined,
-        },
-      });
+          data: {
+            ActualUsageGrams: parseFloat(ActualUsageGrams),
+            MaterialStartGrams: StartGrams ? parseFloat(StartGrams) : undefined,
+            MaterialEndGrams: EndGrams ? parseFloat(EndGrams) : undefined,
+          },
+        });
+      }
+    }
 
-      // Deduct actual usage from printer carboys of this material type
-      if (job.PrinterID) {
-        // Find carboys on this printer that have materials matching this type name
-        const materialType = await prisma.materialType.findUnique({
-          where: { MaterialTypeID: parseInt(MaterialTypeID) },
+    // 2. Process precise JobCarboy history and deductions
+    if (Array.isArray(carboys)) {
+      for (const c of carboys) {
+        let additionalSum = 0;
+        if (c.AdditionalDeductions) {
+          Object.values(c.AdditionalDeductions).forEach(
+            (v: any) => (additionalSum += Number(v) || 0),
+          );
+        }
+
+        const finalEndQty =
+          Number(c.EndGrams || 0) - Number(c.MiscGrams || 0) - additionalSum;
+
+        await prisma.jobCarboy.create({
+          data: {
+            JobID: jobId,
+            PrinterID: c.PrinterID,
+            AreaNumber: c.AreaNumber,
+            SlotNumber: c.SlotNumber,
+            MaterialID: c.MaterialID ? parseInt(c.MaterialID) : null,
+            MaterialName: c.MaterialName,
+            StartGrams: c.StartGrams ? parseFloat(c.StartGrams) : null,
+            EndGrams: c.EndGrams ? parseFloat(c.EndGrams) : null,
+            MiscGrams: c.MiscGrams ? parseFloat(c.MiscGrams) : null,
+            AdditionalDeductions: c.AdditionalDeductions || null,
+          },
         });
 
-        if (materialType) {
-          // Find carboys with materials of similar name
-          const carboys = await prisma.printerCarboy.findMany({
-            where: {
-              PrinterID: job.PrinterID,
-              Material: {
-                MaterialName: {
-                  contains: materialType.TypeName,
-                  mode: "insensitive",
-                },
-              },
-            },
-            include: { Material: true },
+        // Deduct from physical material inventory directly
+        if (c.MaterialID) {
+          await prisma.material.update({
+            where: { MaterialID: parseInt(c.MaterialID) },
+            data: { CurrentQuantityGrams: Math.max(0, finalEndQty) },
           });
-
-          // Distribute usage across matching carboys (simple: deduct evenly or from first)
-          let remainingUsage = parseFloat(ActualUsageGrams);
-          for (const carboy of carboys) {
-            if (remainingUsage <= 0) break;
-            if (!carboy.MaterialID || !carboy.Material) continue;
-
-            const currentQty = Number(
-              carboy.Material.CurrentQuantityGrams || 0,
-            );
-            const deduction = Math.min(remainingUsage, currentQty);
-
-            await prisma.material.update({
-              where: { MaterialID: carboy.MaterialID },
-              data: {
-                CurrentQuantityGrams: Math.max(0, currentQty - deduction),
-              },
-            });
-
-            remainingUsage -= deduction;
-          }
         }
       }
     }
@@ -430,26 +430,28 @@ router.get("/planning/projections", async (req: Request, res: Response) => {
 router.post(
   "/:id/photos",
   auth,
-  uploadPhoto.single("photo"),
+  uploadPhoto.array("photos", 20),
   async (req: Request, res: Response) => {
     const jobId = parseInt(req.params.id as string);
     const { Caption, PhotoType } = req.body;
 
-    if (!req.file) {
-      res.status(400).json({ error: "No photo uploaded" });
+    if (!req.files || (req.files as Express.Multer.File[]).length === 0) {
+      res.status(400).json({ error: "No photos uploaded" });
       return;
     }
 
-    const photo = await prisma.jobPhoto.create({
-      data: {
-        JobID: jobId,
-        FilePath: `/job_photos/${req.file.filename}`,
-        Caption: Caption || null,
-        PhotoType: PhotoType || null,
-      },
+    const photosData = (req.files as Express.Multer.File[]).map((file) => ({
+      JobID: jobId,
+      FilePath: `/job_photos/${file.filename}`,
+      Caption: Caption || null,
+      PhotoType: PhotoType || null,
+    }));
+
+    await prisma.jobPhoto.createMany({
+      data: photosData,
     });
 
-    res.json({ PhotoID: photo.PhotoID, message: "Photo uploaded" });
+    res.json({ message: "Photos uploaded" });
   },
 );
 
@@ -464,7 +466,7 @@ router.delete(
     });
     if (photo) {
       // Delete file from disk
-      const filePath = path.join(__dirname, "..", photo.FilePath);
+      const filePath = path.join(process.cwd(), photo.FilePath);
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       await prisma.jobPhoto.delete({ where: { PhotoID: photoId } });
     }

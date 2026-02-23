@@ -3,6 +3,8 @@
 #backend
 /backend/node_modules
 /backend/.env
+/backend/job_photos
+/backend/stl_files
 
 # dependencies
 node_modules/

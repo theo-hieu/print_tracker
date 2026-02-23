@@ -38,6 +38,17 @@ jest.mock("multer", () => {
       };
       next();
     },
+    array: () => (req: any, res: any, next: any) => {
+      req.files = [
+        {
+          filename: "test-photo.jpg",
+          originalname: "test-photo.jpg",
+          path: "path/to/test-photo.jpg",
+          buffer: Buffer.from("test"),
+        },
+      ];
+      next();
+    },
   });
   multer.memoryStorage = () => {};
   multer.diskStorage = () => {};
@@ -149,59 +160,42 @@ describe("Jobs API", () => {
     expect(res.status).toBe(404);
   });
 
-  it("POST /api/jobs/:id/complete - invalid payload", async () => {
-    prismaMock.job.findUnique.mockResolvedValue({ JobID: 1 } as any);
-    const res = await request(app)
-      .post("/api/jobs/1/complete")
-      .send({ materials: "not-an-array" });
-    expect(res.status).toBe(400);
-  });
-
-  it("POST /api/jobs/:id/complete - success with multi-carboy deduction", async () => {
+  it("POST /api/jobs/:id/complete - success with direct jobcarboy creation and deduction", async () => {
     const mockJob = { JobID: 1, PrinterID: 1 };
-    const materials = [{ MaterialTypeID: 1, ActualUsageGrams: 500 }]; // Need 500g
+    const materials = [{ MaterialTypeID: 1, ActualUsageGrams: 500 }];
+    const carboys = [
+      {
+        PrinterID: 1,
+        AreaNumber: 1,
+        SlotNumber: 1,
+        MaterialID: 10,
+        MaterialName: "Vero",
+        StartGrams: 300,
+        EndGrams: 200,
+        MiscGrams: 0,
+        AdditionalDeductions: { Spill: 10 },
+      },
+    ];
 
     prismaMock.job.findUnique.mockResolvedValue(mockJob as any);
     prismaMock.jobMaterial.update.mockResolvedValue({} as any);
 
-    // Printer checks
-    prismaMock.materialType.findUnique.mockResolvedValue({
-      TypeName: "Vero",
-    } as any);
-
-    // Mock 2 carboys with 300g each
-    const carboys = [
-      {
-        PrinterCarboyID: 1,
-        MaterialID: 10,
-        Material: {
-          MaterialID: 10,
-          CurrentQuantityGrams: 300,
-          MaterialName: "Vero 1",
-        },
-      },
-      {
-        PrinterCarboyID: 2,
-        MaterialID: 11,
-        Material: {
-          MaterialID: 11,
-          CurrentQuantityGrams: 300,
-          MaterialName: "Vero 2",
-        },
-      },
-    ];
-    prismaMock.printerCarboy.findMany.mockResolvedValue(carboys as any);
-
+    prismaMock.jobCarboy.create.mockResolvedValue({} as any);
     prismaMock.material.update.mockResolvedValue({} as any);
     prismaMock.job.update.mockResolvedValue({ Status: "completed" } as any);
 
     const res = await request(app)
       .post("/api/jobs/1/complete")
-      .send({ materials });
+      .send({ materials, carboys });
 
     expect(res.status).toBe(200);
-    // Should update twice: 300g from first, 200g from second
-    expect(prismaMock.material.update).toHaveBeenCalledTimes(2);
+    // EndGrams (200) - Misc (0) - Additional (10) = 190
+    expect(prismaMock.material.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { MaterialID: 10 },
+        data: { CurrentQuantityGrams: 190 },
+      }),
+    );
   });
 
   it("POST /api/jobs/:id/complete - handle deduction error", async () => {
@@ -236,7 +230,7 @@ describe("Jobs API", () => {
 
   // --- PHOTOS ---
   it("POST /api/jobs/:id/photos - success", async () => {
-    prismaMock.jobPhoto.create.mockResolvedValue({ PhotoID: 1 } as any);
+    prismaMock.jobPhoto.createMany.mockResolvedValue({ count: 1 } as any);
     const res = await request(app).post("/api/jobs/1/photos"); // Multer mock injects file
     expect(res.status).toBe(200);
   });
@@ -300,93 +294,5 @@ describe("Jobs API", () => {
 
     const res = await request(app).post("/api/jobs/import/csv");
     expect(res.status).toBe(200);
-  });
-
-  it("POST /api/jobs/:id/complete - skip if material type not found", async () => {
-    prismaMock.job.findUnique.mockResolvedValue({
-      JobID: 1,
-      PrinterID: 1,
-    } as any);
-    prismaMock.jobMaterial.update.mockResolvedValue({} as any);
-    // Material type not found
-    prismaMock.materialType.findUnique.mockResolvedValue(null);
-
-    const res = await request(app)
-      .post("/api/jobs/1/complete")
-      .send({
-        materials: [{ MaterialTypeID: 999, ActualUsageGrams: 100 }],
-      });
-    expect(res.status).toBe(200);
-    // Should not call printerCarboy.findMany
-    expect(prismaMock.printerCarboy.findMany).not.toHaveBeenCalled();
-  });
-
-  it("POST /api/jobs/:id/complete - partial deduction (remaining <= 0)", async () => {
-    prismaMock.job.findUnique.mockResolvedValue({
-      JobID: 1,
-      PrinterID: 1,
-    } as any);
-    prismaMock.jobMaterial.update.mockResolvedValue({} as any);
-    prismaMock.materialType.findUnique.mockResolvedValue({
-      TypeName: "Vero",
-    } as any);
-
-    // First carboy has enough (500 > 100). Second should be skipped.
-    const carboys = [
-      {
-        PrinterCarboyID: 1,
-        MaterialID: 10,
-        Material: { MaterialID: 10, CurrentQuantityGrams: 500 },
-      },
-      {
-        PrinterCarboyID: 2,
-        MaterialID: 11,
-        Material: { MaterialID: 11, CurrentQuantityGrams: 500 },
-      },
-    ];
-    prismaMock.printerCarboy.findMany.mockResolvedValue(carboys as any);
-    prismaMock.material.update.mockResolvedValue({} as any);
-    prismaMock.job.update.mockResolvedValue({} as any);
-
-    const res = await request(app)
-      .post("/api/jobs/1/complete")
-      .send({
-        materials: [{ MaterialTypeID: 1, ActualUsageGrams: 100 }],
-      });
-
-    expect(res.status).toBe(200);
-    expect(prismaMock.material.update).toHaveBeenCalledTimes(1); // Only triggers once
-  });
-
-  it("POST /api/jobs/:id/complete - skip carboy with no material", async () => {
-    prismaMock.job.findUnique.mockResolvedValue({
-      JobID: 1,
-      PrinterID: 1,
-    } as any);
-    prismaMock.jobMaterial.update.mockResolvedValue({} as any);
-    prismaMock.materialType.findUnique.mockResolvedValue({
-      TypeName: "Vero",
-    } as any);
-
-    const carboys = [
-      { PrinterCarboyID: 1, MaterialID: null }, // Valid carboy but empty
-      {
-        PrinterCarboyID: 2,
-        MaterialID: 11,
-        Material: { MaterialID: 11, CurrentQuantityGrams: 500 },
-      },
-    ];
-    prismaMock.printerCarboy.findMany.mockResolvedValue(carboys as any);
-    prismaMock.material.update.mockResolvedValue({} as any);
-    prismaMock.job.update.mockResolvedValue({} as any);
-
-    const res = await request(app)
-      .post("/api/jobs/1/complete")
-      .send({
-        materials: [{ MaterialTypeID: 1, ActualUsageGrams: 100 }],
-      });
-
-    expect(res.status).toBe(200);
-    expect(prismaMock.material.update).toHaveBeenCalledTimes(1);
   });
 });

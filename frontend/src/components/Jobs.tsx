@@ -32,6 +32,20 @@ interface JobMaterialData {
   ActualUsageGrams?: number;
 }
 
+interface JobCarboyData {
+  JobCarboyID: number;
+  PrinterID: number;
+  AreaNumber: number;
+  SlotNumber: number;
+  MaterialID?: number;
+  MaterialName?: string;
+  StartGrams?: number;
+  EndGrams?: number;
+  MiscGrams?: number;
+  AdditionalDeductions?: Record<string, number>;
+  Material?: { LotNumber?: string };
+}
+
 interface JobPhoto {
   PhotoID: number;
   FilePath: string;
@@ -58,6 +72,7 @@ interface Job {
   PrinterType?: string;
   JobMaterials: JobMaterialData[];
   JobPhotos: JobPhoto[];
+  JobCarboys: JobCarboyData[];
   ClientName?: string;
   ClientID?: number;
 }
@@ -118,6 +133,26 @@ export default function Jobs() {
   const [actualUsageEdits, setActualUsageEdits] = useState<
     Record<number, string>
   >({});
+  const [expandedPhoto, setExpandedPhoto] = useState<string | null>(null);
+
+  // Job Completion Form State
+  const [completionFlows, setCompletionFlows] = useState<
+    Record<
+      number,
+      {
+        columns: string[];
+        carboys: Record<
+          string,
+          {
+            EndGrams: string;
+            MiscGrams: string;
+            additional: Record<string, string>;
+          }
+        >;
+      }
+    >
+  >({});
+
   const [loading, setLoading] = useState(true);
 
   // Month filter — defaults to current month
@@ -317,7 +352,7 @@ export default function Jobs() {
       (jm) => actualUsageEdits[jm.MaterialTypeID] !== undefined,
     ).map((jm) => ({
       MaterialTypeID: jm.MaterialTypeID,
-      ActualUsageGrams: parseFloat(actualUsageEdits[jm.MaterialTypeID]),
+      ActualUsageGrams: parseFloat(actualUsageEdits[jm.MaterialTypeID] || "0"),
     }));
 
     if (materials.length === 0) return;
@@ -325,6 +360,83 @@ export default function Jobs() {
     try {
       await api.post(`/jobs/${jobId}/complete`, { materials });
       setActualUsageEdits({});
+      load();
+    } catch (err) {
+      console.error("Failed to complete job", err);
+      alert("Failed to complete job");
+    }
+  };
+
+  const initCompletionForm = (job: Job) => {
+    const printer = printers.find((p) => p.PrinterID === job.PrinterID);
+    if (!printer || !printer.PrinterCarboys) {
+      alert("No printer carboys found. Cannot do detailed material tracking.");
+      return;
+    }
+
+    const initialCarboys: Record<string, any> = {};
+    printer.PrinterCarboys.forEach((pc: any) => {
+      if (pc.MaterialID) {
+        const pcId = `A${pc.AreaNumber}S${pc.SlotNumber}`;
+        initialCarboys[pcId] = {
+          EndGrams: pc.Material?.CurrentQuantityGrams?.toString() || "",
+          MiscGrams: "0",
+          additional: {},
+        };
+      }
+    });
+
+    setCompletionFlows((prev) => ({
+      ...prev,
+      [job.JobID]: {
+        columns: ["After Cleaning"],
+        carboys: initialCarboys,
+      },
+    }));
+  };
+
+  const handleSaveCompletionFlow = async (jobId: number) => {
+    const job = jobs.find((j) => j.JobID === jobId);
+    const flow = completionFlows[jobId];
+    const printer = printers.find((p) => p.PrinterID === job?.PrinterID);
+    if (!job || !flow || !printer) return;
+
+    const carboysPayload = Object.entries(flow.carboys)
+      .map(([pcIdStr, data]) => {
+        const pc = printer.PrinterCarboys?.find(
+          (c: any) => `A${c.AreaNumber}S${c.SlotNumber}` === pcIdStr,
+        );
+        if (!pc) return null;
+        return {
+          PrinterID: pc.PrinterID,
+          AreaNumber: pc.AreaNumber,
+          SlotNumber: pc.SlotNumber,
+          MaterialID: pc.MaterialID,
+          MaterialName: pc.Material?.MaterialName,
+          StartGrams: pc.Material?.CurrentQuantityGrams,
+          EndGrams: data.EndGrams ? parseFloat(data.EndGrams) : null,
+          MiscGrams: data.MiscGrams ? parseFloat(data.MiscGrams) : null,
+          AdditionalDeductions: data.additional,
+        };
+      })
+      .filter(Boolean);
+
+    // Provide default material averages so historical jobs dont break
+    const materials = job.JobMaterials.map((jm) => ({
+      MaterialTypeID: jm.MaterialTypeID,
+      ActualUsageGrams: jm.MaterialUsageGrams,
+    }));
+
+    try {
+      await api.post(`/jobs/${jobId}/complete`, {
+        materials,
+        carboys: carboysPayload,
+      });
+
+      const newFlows = { ...completionFlows };
+      delete newFlows[jobId];
+      setCompletionFlows(newFlows);
+
       load();
     } catch (err) {
       console.error("Failed to complete job", err);
@@ -371,11 +483,13 @@ export default function Jobs() {
     jobId: number,
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     const fd = new FormData();
-    fd.append("photo", file);
+    for (let i = 0; i < files.length; i++) {
+      fd.append("photos", files[i]);
+    }
     fd.append("PhotoType", "after");
 
     try {
@@ -384,7 +498,7 @@ export default function Jobs() {
       });
       load();
     } catch (err) {
-      console.error("Failed to upload photo", err);
+      console.error("Failed to upload photos", err);
     }
   };
 
@@ -795,102 +909,394 @@ export default function Jobs() {
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* Materials Breakdown */}
                             <div>
-                              <h4 className="font-semibold text-sm text-gray-700 mb-2">
-                                Material Details
-                              </h4>
-                              {j.JobMaterials.length > 0 ? (
-                                <div className="space-y-2">
-                                  {j.JobMaterials.map((jm) => (
-                                    <div
-                                      key={jm.MaterialTypeID}
-                                      className="bg-white p-3 rounded border text-sm"
-                                    >
-                                      <div className="flex justify-between items-center mb-1">
-                                        <span className="font-medium">
-                                          {jm.MaterialTypeName}
-                                        </span>
-                                        <span className="text-xs text-gray-500">
-                                          Est: {Number(jm.MaterialUsageGrams)}g
-                                        </span>
-                                      </div>
-                                      <div className="text-xs text-gray-500 space-y-0.5">
-                                        <div className="flex items-center gap-2 mt-1">
-                                          <label className="text-gray-600 font-medium">
-                                            Start:
-                                          </label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            className="w-20 border rounded px-2 py-0.5 text-right focus:ring-1 focus:ring-blue-400 outline-none"
-                                            value={jm.MaterialStartGrams ?? ""}
-                                            defaultValue={
-                                              jm.MaterialStartGrams ?? ""
-                                            }
-                                            readOnly
-                                          />
-                                          <span className="text-gray-400">
-                                            g
-                                          </span>
-                                          <span className="text-gray-500 mx-1">
-                                            →
-                                          </span>
-                                          <span
-                                            className="text-gray-500"
-                                            title="Predicted End"
+                              {/* Carboy Tracking / Old Material Breakdown */}
+                              {j.Status === "completed" &&
+                              j.JobCarboys?.length > 0 ? (
+                                <div className="space-y-4">
+                                  <h4 className="font-semibold text-sm text-gray-700 mb-2">
+                                    Carboy Material Deductions
+                                  </h4>
+                                  <div className="overflow-x-auto border rounded bg-white">
+                                    <table className="min-w-full text-xs">
+                                      <thead className="bg-gray-50 border-b">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left font-medium text-gray-600">
+                                            Carboy
+                                          </th>
+                                          <th className="px-3 py-2 text-right font-medium text-gray-600">
+                                            Start (g)
+                                          </th>
+                                          <th className="px-3 py-2 text-right font-medium text-gray-600">
+                                            After (g)
+                                          </th>
+                                          <th className="px-3 py-2 text-right font-medium text-gray-600">
+                                            Misc (g)
+                                          </th>
+                                          <th className="px-3 py-2 text-right font-medium text-gray-600">
+                                            Extras
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {j.JobCarboys.map((jc) => (
+                                          <tr
+                                            key={jc.JobCarboyID}
+                                            className="hover:bg-gray-50 text-gray-800"
                                           >
-                                            {calculatePredictedEnd(
-                                              Number(
-                                                jm.MaterialStartGrams || 0,
-                                              ),
-                                              Number(jm.MaterialUsageGrams),
-                                            )}
-                                            g
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center gap-2 mt-1">
-                                          <label className="text-gray-600 font-medium">
-                                            Actual:
-                                          </label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            min="0"
-                                            className="w-20 border rounded px-2 py-0.5 text-right focus:ring-1 focus:ring-red-400 outline-none"
-                                            value={
-                                              actualUsageEdits[
-                                                jm.MaterialTypeID
-                                              ] ??
-                                              jm.ActualUsageGrams?.toString() ??
-                                              ""
-                                            }
-                                            onChange={(e) =>
-                                              setActualUsageEdits({
-                                                ...actualUsageEdits,
-                                                [jm.MaterialTypeID]:
-                                                  e.target.value,
-                                              })
-                                            }
-                                          />
-                                          <span className="text-gray-400">
-                                            g
-                                          </span>
-                                        </div>
-                                      </div>
+                                            <td className="px-3 py-2">
+                                              <div>
+                                                {jc.MaterialName ||
+                                                  `Unknown (A${jc.AreaNumber} S${jc.SlotNumber})`}
+                                              </div>
+                                              {jc.Material?.LotNumber && (
+                                                <div className="text-[10px] text-gray-500">
+                                                  Lot: {jc.Material.LotNumber}
+                                                </div>
+                                              )}
+                                            </td>
+                                            <td className="px-3 py-2 text-right">
+                                              {Number(jc.StartGrams || 0)}
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-medium">
+                                              {Number(jc.EndGrams || 0)}
+                                            </td>
+                                            <td className="px-3 py-2 text-right text-gray-500">
+                                              {Number(jc.MiscGrams || 0)}
+                                            </td>
+                                            <td className="px-3 py-2 text-right text-[10px] text-gray-500">
+                                              {jc.AdditionalDeductions
+                                                ? Object.entries(
+                                                    jc.AdditionalDeductions,
+                                                  ).map(([k, v]) => (
+                                                    <div key={k}>
+                                                      {k}: {v}g
+                                                    </div>
+                                                  ))
+                                                : "-"}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : completionFlows[j.JobID] ? (
+                                <div className="space-y-3">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <h4 className="font-semibold text-sm text-gray-700">
+                                      Detailed Job Completion Tracking
+                                    </h4>
+                                    <div className="flex gap-2">
+                                      <button
+                                        className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700 font-medium transition-colors"
+                                        onClick={() => {
+                                          const colName = prompt(
+                                            "Enter new deduction column name (e.g. Purge)",
+                                          );
+                                          if (colName && colName.trim()) {
+                                            setCompletionFlows((prev) => ({
+                                              ...prev,
+                                              [j.JobID]: {
+                                                ...prev[j.JobID],
+                                                columns: [
+                                                  ...prev[j.JobID].columns,
+                                                  colName.trim(),
+                                                ],
+                                              },
+                                            }));
+                                          }
+                                        }}
+                                      >
+                                        + Add Column
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleSaveCompletionFlow(j.JobID)
+                                        }
+                                        className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded font-medium shadow-sm transition-colors"
+                                      >
+                                        Finish & Deduct Inventory
+                                      </button>
                                     </div>
-                                  ))}
-                                  <button
-                                    onClick={() =>
-                                      handleSaveActualUsage(j.JobID)
-                                    }
-                                    className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-medium mt-1"
-                                  >
-                                    Complete Job & Save Usage
-                                  </button>
+                                  </div>
+
+                                  <div className="overflow-x-auto border rounded bg-white w-full">
+                                    <table className="min-w-full text-xs">
+                                      <thead className="bg-gray-50 border-b">
+                                        <tr>
+                                          <th className="px-2 py-2 text-left font-medium text-gray-600 w-40">
+                                            Load (Carboy)
+                                          </th>
+                                          <th className="px-2 py-2 text-left font-medium text-gray-600 w-20">
+                                            Start (g)
+                                          </th>
+                                          <th className="px-2 py-2 text-left font-medium text-gray-600 w-20 border-l border-blue-200 bg-blue-50/30">
+                                            End (g)
+                                          </th>
+                                          <th className="px-2 py-2 text-left font-medium text-gray-600 w-20 border-l border-gray-200">
+                                            Misc (g)
+                                          </th>
+                                          {completionFlows[j.JobID].columns.map(
+                                            (col, idx) => (
+                                              <th
+                                                key={col}
+                                                className="px-2 py-2 text-left font-medium text-gray-600 relative group border-l border-gray-200"
+                                              >
+                                                {col}
+                                                <button
+                                                  className="absolute right-1 top-1 text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600"
+                                                  onClick={() =>
+                                                    setCompletionFlows(
+                                                      (prev) => {
+                                                        const newCols = [
+                                                          ...prev[j.JobID]
+                                                            .columns,
+                                                        ];
+                                                        newCols.splice(idx, 1);
+                                                        return {
+                                                          ...prev,
+                                                          [j.JobID]: {
+                                                            ...prev[j.JobID],
+                                                            columns: newCols,
+                                                          },
+                                                        };
+                                                      },
+                                                    )
+                                                  }
+                                                >
+                                                  <X size={12} />
+                                                </button>
+                                              </th>
+                                            ),
+                                          )}
+                                          <th className="px-2 py-2 text-right font-medium text-gray-600 bg-gray-100 border-l border-gray-200">
+                                            Final Usage
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {printers
+                                          .find(
+                                            (p) => p.PrinterID === j.PrinterID,
+                                          )
+                                          ?.PrinterCarboys?.filter(
+                                            (c) => c.MaterialID,
+                                          )
+                                          .map((c) => {
+                                            const pcId = `A${c.AreaNumber}S${c.SlotNumber}`;
+                                            const data =
+                                              completionFlows[j.JobID].carboys[
+                                                pcId
+                                              ];
+                                            if (!data) return null;
+
+                                            const updateField = (
+                                              field: string,
+                                              val: string,
+                                            ) => {
+                                              setCompletionFlows((prev) => ({
+                                                ...prev,
+                                                [j.JobID]: {
+                                                  ...prev[j.JobID],
+                                                  carboys: {
+                                                    ...prev[j.JobID].carboys,
+                                                    [pcId]: {
+                                                      ...prev[j.JobID].carboys[
+                                                        pcId
+                                                      ],
+                                                      [field]: val,
+                                                    },
+                                                  },
+                                                },
+                                              }));
+                                            };
+
+                                            const updateAdditional = (
+                                              col: string,
+                                              val: string,
+                                            ) => {
+                                              setCompletionFlows((prev) => ({
+                                                ...prev,
+                                                [j.JobID]: {
+                                                  ...prev[j.JobID],
+                                                  carboys: {
+                                                    ...prev[j.JobID].carboys,
+                                                    [pcId]: {
+                                                      ...prev[j.JobID].carboys[
+                                                        pcId
+                                                      ],
+                                                      additional: {
+                                                        ...prev[j.JobID]
+                                                          .carboys[pcId]
+                                                          .additional,
+                                                        [col]: val,
+                                                      },
+                                                    },
+                                                  },
+                                                },
+                                              }));
+                                            };
+
+                                            return (
+                                              <tr key={pcId}>
+                                                <td className="px-2 py-2 truncate text-[10px] font-medium text-gray-700">
+                                                  {c.Material?.MaterialName}{" "}
+                                                  <br />
+                                                  <span className="text-gray-400 font-normal">
+                                                    A{c.AreaNumber} S
+                                                    {c.SlotNumber}
+                                                  </span>
+                                                  {c.Material?.LotNumber && (
+                                                    <div>
+                                                      <span className="text-gray-400 font-normal">
+                                                        Lot:{" "}
+                                                        {c.Material.LotNumber}
+                                                      </span>
+                                                    </div>
+                                                  )}
+                                                </td>
+                                                <td className="px-2 py-2 text-gray-500">
+                                                  {Number(
+                                                    c.Material
+                                                      ?.CurrentQuantityGrams ||
+                                                      0,
+                                                  ).toFixed(0)}
+                                                </td>
+                                                <td className="px-2 py-1 border-l border-blue-100 bg-blue-50/10">
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    min="0"
+                                                    className="w-full min-w-[50px] border border-blue-200 rounded px-1.5 py-1 text-right focus:ring-1 focus:ring-blue-400 outline-none shadow-inner"
+                                                    value={data.EndGrams}
+                                                    onChange={(e) =>
+                                                      updateField(
+                                                        "EndGrams",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                  />
+                                                </td>
+                                                <td className="px-2 py-1 border-l border-gray-100">
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    min="0"
+                                                    className="w-full min-w-[50px] border border-gray-200 rounded px-1.5 py-1 text-right focus:ring-1 focus:ring-gray-300 outline-none"
+                                                    value={data.MiscGrams}
+                                                    onChange={(e) =>
+                                                      updateField(
+                                                        "MiscGrams",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                  />
+                                                </td>
+                                                {completionFlows[
+                                                  j.JobID
+                                                ].columns.map((col) => (
+                                                  <td
+                                                    key={col}
+                                                    className="px-2 py-1 border-l border-gray-100"
+                                                  >
+                                                    <input
+                                                      type="number"
+                                                      step="1"
+                                                      min="0"
+                                                      className="w-full min-w-[50px] border border-gray-200 rounded px-1.5 py-1 text-right focus:ring-1 focus:ring-gray-300 outline-none"
+                                                      value={
+                                                        data.additional[col] ||
+                                                        ""
+                                                      }
+                                                      onChange={(e) =>
+                                                        updateAdditional(
+                                                          col,
+                                                          e.target.value,
+                                                        )
+                                                      }
+                                                    />
+                                                  </td>
+                                                ))}
+                                                <td className="px-2 py-1 bg-gray-100 border-l border-gray-200 text-right font-semibold text-gray-800">
+                                                  {(() => {
+                                                    const start = Number(
+                                                      c.Material
+                                                        ?.CurrentQuantityGrams ||
+                                                        0,
+                                                    );
+                                                    const end = Number(
+                                                      data.EndGrams || start,
+                                                    );
+                                                    const misc = Number(
+                                                      data.MiscGrams || 0,
+                                                    );
+                                                    const addl = Object.values(
+                                                      data.additional,
+                                                    ).reduce(
+                                                      (a, b) =>
+                                                        a + Number(b || 0),
+                                                      0,
+                                                    );
+                                                    return (
+                                                      start -
+                                                      end +
+                                                      misc +
+                                                      addl
+                                                    ).toFixed(1);
+                                                  })()}
+                                                  g
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 </div>
                               ) : (
-                                <p className="text-sm text-gray-500">
-                                  No materials tracked
-                                </p>
+                                <div>
+                                  <h4 className="font-semibold text-sm text-gray-700 mb-2">
+                                    Material Breakdown
+                                  </h4>
+                                  {j.JobMaterials.length > 0 ? (
+                                    <div className="space-y-2">
+                                      {j.JobMaterials.map((jm) => (
+                                        <div
+                                          key={jm.MaterialTypeID}
+                                          className="bg-white p-3 rounded border text-sm flex justify-between items-center"
+                                        >
+                                          <div>
+                                            <div className="font-medium text-gray-800">
+                                              {jm.MaterialTypeName}
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-0.5">
+                                              Estimated Usage:{" "}
+                                              {Number(jm.MaterialUsageGrams)}g
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                      {j.Status !== "completed" &&
+                                        j.PrinterID && (
+                                          <div className="pt-2">
+                                            <button
+                                              onClick={() =>
+                                                initCompletionForm(j)
+                                              }
+                                              className="w-full bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2 text-sm font-medium transition-colors shadow-sm"
+                                            >
+                                              Detailed Job Completion &
+                                              Inventory Update
+                                            </button>
+                                          </div>
+                                        )}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-gray-500">
+                                      No materials tracked
+                                    </p>
+                                  )}
+                                </div>
                               )}
                             </div>
 
@@ -903,7 +1309,7 @@ export default function Jobs() {
                                 {j.JobPhotos.map((p) => (
                                   <div
                                     key={p.PhotoID}
-                                    className="relative group"
+                                    className="relative group cursor-pointer"
                                   >
                                     <img
                                       src={
@@ -913,12 +1319,21 @@ export default function Jobs() {
                                         ) + p.FilePath
                                       }
                                       alt={p.Caption || "Job Photo"}
-                                      className="w-20 h-20 object-cover rounded border"
+                                      className="w-20 h-20 object-cover rounded border hover:opacity-90 transition-opacity"
+                                      onClick={() =>
+                                        setExpandedPhoto(
+                                          api.defaults.baseURL?.replace(
+                                            "/api",
+                                            "",
+                                          ) + p.FilePath,
+                                        )
+                                      }
                                     />
                                     <button
-                                      onClick={() =>
-                                        handleDeletePhoto(j.JobID, p.PhotoID)
-                                      }
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeletePhoto(j.JobID, p.PhotoID);
+                                      }}
                                       className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                                     >
                                       <X size={10} />
@@ -927,10 +1342,11 @@ export default function Jobs() {
                                 ))}
                               </div>
                               <label className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 cursor-pointer">
-                                <Camera size={12} /> Upload Photo
+                                <Camera size={12} /> Upload Photos
                                 <input
                                   type="file"
                                   accept="image/*"
+                                  multiple
                                   className="hidden"
                                   onChange={(e) =>
                                     handlePhotoUpload(j.JobID, e)
@@ -1446,6 +1862,28 @@ export default function Jobs() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Expanded Photo View */}
+      {expandedPhoto && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60] cursor-pointer"
+          onClick={() => setExpandedPhoto(null)}
+        >
+          <div className="relative max-w-full max-h-full">
+            <button
+              onClick={() => setExpandedPhoto(null)}
+              className="absolute -top-10 right-0 text-white hover:text-gray-300"
+            >
+              <X size={32} />
+            </button>
+            <img
+              src={expandedPhoto}
+              alt="Expanded view"
+              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}
